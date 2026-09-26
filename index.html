@@ -66,10 +66,10 @@
     let currentDate = new Date(2026, 8, 1); // 2026 Sept default
     let activeTab = 'dashboard';
     let selectedCalendarDate = null;
-    let editingScheduleIndex = null; // 追蹤目前正在編輯的行程索引
+    let editingScheduleIndex = null;
 
     // LocalStorage Keys & Default Data
-    const STORAGE_KEY = 'app_data_v3';
+    const STORAGE_KEY = 'app_data_v4';
     let store = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
       workConfig: { monthlySalary: 45000, dailyHours: 8, startTime: '09:00', endTime: '18:00', restHours: 1 },
       parttimeConfig: { hourlyRate: 190, startTime: '18:30', endTime: '21:30', restMinutes: 0 },
@@ -85,7 +85,7 @@
       render();
     }
 
-    // 時間計算工具：輸入 "09:00", "18:00", 休息分鐘，計算出小數點工時
+    // 時間計算工具
     function calcTimeDiffHours(startStr, endStr, restMins = 0) {
       if (!startStr || !endStr) return 0;
       const [sH, sM] = startStr.split(':').map(Number);
@@ -99,7 +99,7 @@
       }
 
       const diffMins = endTotal - startTotal - (parseFloat(restMins) || 0);
-      return Math.max(0, Math.round((diffMins / 60) * 10) / 10); // 四捨五入到小數一位
+      return Math.max(0, Math.round((diffMins / 60) * 10) / 10);
     }
 
     // Date Utilities
@@ -238,7 +238,7 @@
         <div class="grid grid-cols-7 gap-1">`;
 
       for (let i = 0; i < startDay; i++) {
-        html += `<div class="h-20 md:h-24 bg-slate-50 rounded-lg opacity-40"></div>`;
+        html += `<div class="h-24 md:h-28 bg-slate-50 rounded-lg opacity-40"></div>`;
       }
 
       for (let day = 1; day <= daysInMonth; day++) {
@@ -247,7 +247,7 @@
         const content = customDayRenderer ? customDayRenderer(key, day) : '';
 
         html += `
-          <div onclick="openDateModal('${key}')" class="h-20 md:h-24 p-1 border border-slate-100 rounded-lg hover:border-indigo-400 transition cursor-pointer bg-white flex flex-col justify-between overflow-hidden ${isToday ? 'ring-2 ring-indigo-500' : ''}">
+          <div onclick="openDateModal('${key}')" class="h-24 md:h-28 p-1 border border-slate-100 rounded-lg hover:border-indigo-400 transition cursor-pointer bg-white flex flex-col justify-between overflow-hidden ${isToday ? 'ring-2 ring-indigo-500' : ''}">
             <span class="text-xs font-semibold ${isToday ? 'text-indigo-600' : 'text-slate-700'}">${day}</span>
             <div class="flex-1 overflow-y-auto hide-scrollbar text-[10px] space-y-0.5 mt-0.5">
               ${content}
@@ -294,34 +294,68 @@
           </div>
         </div>
 
-        <!-- Integrated Calendar -->
+        <!-- Integrated Calendar with Detailed Daily Schedule -->
         ${renderCalendar(year, month, (key) => {
           let tags = '';
+
+          // 1. 正職工作詳細
           const work = store.workLogs[key];
           if (work) {
-            if (work.isOff) tags += `<div class="bg-rose-100 text-rose-700 px-1 rounded">休: ${work.offType||'請假'}</div>`;
-            else if (work.overtimeHours) tags += `<div class="bg-blue-100 text-blue-700 px-1 rounded">加班 ${work.overtimeHours}h</div>`;
+            if (work.isOff) {
+              tags += `<div class="bg-rose-100 text-rose-700 px-1 py-0.5 rounded leading-tight">
+                <span class="font-bold">正職休假</span>: ${work.offType||'請假'}
+              </div>`;
+            } else {
+              const sTime = work.startTime || store.workConfig.startTime;
+              const eTime = work.endTime || store.workConfig.endTime;
+              let otInfo = work.overtimeHours ? ` (加${work.overtimeHours}h)` : '';
+              tags += `<div class="bg-blue-100 text-blue-800 px-1 py-0.5 rounded leading-tight">
+                <div class="font-semibold">正職 ${sTime}-${eTime}${otInfo}</div>${work.note ? `<div class="text-[9px] text-blue-600 truncate">備註: ${work.note}</div>` : ''}
+              </div>`;
+            }
           }
 
+          // 2. 兼職詳細
           const pt = store.parttimeLogs[key];
           if (pt && pt.startTime && pt.endTime) {
             const h = calcTimeDiffHours(pt.startTime, pt.endTime, pt.restMinutes || 0);
-            if (h > 0) tags += `<div class="bg-emerald-100 text-emerald-700 px-1 rounded">兼職 ${h}h</div>`;
+            if (h > 0) {
+              let rateNote = pt.isNationalHoliday ? ' (雙倍)' : '';
+              tags += `<div class="bg-emerald-100 text-emerald-800 px-1 py-0.5 rounded leading-tight">
+                <div class="font-semibold">兼職 ${pt.startTime}-${pt.endTime}${rateNote}</div>
+                <div class="text-[9px] text-emerald-600 truncate">${h}小時 ${pt.note ? '| ' + pt.note : ''}</div>
+              </div>`;
+            }
           }
 
+          // 3. 行程詳細
           const sch = store.schedules[key];
           if (sch && sch.length) {
+            const catBg = {
+              '出遊': 'bg-sky-100 text-sky-800',
+              '朋友': 'bg-purple-100 text-purple-800',
+              '家人': 'bg-amber-100 text-amber-800',
+              '事情': 'bg-slate-100 text-slate-800'
+            };
             sch.forEach(s => {
-              tags += `<div class="bg-purple-100 text-purple-700 px-1 rounded truncate">${s.title}</div>`;
+              tags += `<div class="${catBg[s.category] || 'bg-slate-100'} px-1 py-0.5 rounded truncate leading-tight">
+                <span class="font-bold">[${s.category}]</span>${s.title}
+              </div>`;
             });
           }
 
+          // 4. 社會勞動詳細
           const soc = store.socialLogs[key];
           if (soc && soc.hours) {
             if (soc.status === 'completed') {
-              tags += `<div class="bg-amber-100 text-amber-800 px-1 rounded">社勞 ${soc.hours}h</div>`;
+              tags += `<div class="bg-amber-100 text-amber-900 px-1 py-0.5 rounded leading-tight">
+                <div class="font-semibold">社勞 ${soc.hours}h (已完成)</div>
+                ${soc.location ? `<div class="text-[9px] text-amber-700 truncate">地點: ${soc.location}</div>` : ''}
+              </div>`;
             } else {
-              tags += `<div class="bg-amber-50 text-amber-600 border border-amber-200 px-1 rounded">預計社勞 ${soc.hours}h</div>`;
+              tags += `<div class="bg-amber-50 text-amber-700 border border-amber-200 px-1 py-0.5 rounded leading-tight">
+                <div class="font-semibold">預計社勞 ${soc.hours}h</div>${soc.location ? `<div class="text-[9px] text-amber-600 truncate">地點: ${soc.location}</div>` : ''}
+              </div>`;
             }
           }
           return tags;
@@ -363,8 +397,9 @@
           const log = store.workLogs[key];
           if (!log) return '';
           if (log.isOff) return `<div class="bg-rose-100 text-rose-700 p-1 rounded font-medium">${log.offType || '休假'}</div>`;
-          let res = `<div class="text-slate-600">${log.startTime || store.workConfig.startTime}</div>`;
-          if (log.overtimeHours) res += `<div class="bg-blue-100 text-blue-700 p-0.5 rounded">加 ${log.overtimeHours}h</div>`;
+          let res = `<div class="text-slate-600 font-medium">${log.startTime \vert{}\vert{} store.workConfig.startTime}-${log.endTime || store.workConfig.endTime}</div>`;
+          if (log.overtimeHours) res += `<div class="bg-blue-100 text-blue-700 p-0.5 rounded">加班 ${log.overtimeHours}h</div>`;
+          if (log.note) res += `<div class="text-[9px] text-slate-500 truncate">${log.note}</div>`;
           return res;
         })}
       `;
@@ -406,7 +441,10 @@
           const hours = calcTimeDiffHours(log.startTime, log.endTime, log.restMinutes || 0);
           if (hours <= 0) return '';
           let rateNote = log.isNationalHoliday ? ' (雙倍)' : '';
-          return `<div class="bg-emerald-100 text-emerald-800 p-1 rounded">${hours}h (${log.startTime})${rateNote}</div>`;
+          return `<div class="bg-emerald-100 text-emerald-800 p-1 rounded">
+            <div>${log.startTime}-${log.endTime}</div>
+            <div class="font-bold">${hours}h${rateNote}</div>${log.note ? `<div class="text-[9px] text-emerald-600 truncate">${log.note}</div>` : ''}
+          </div>`;
         })}
       `;
     }
@@ -437,7 +475,7 @@
           };
           return list.map(item => `
             <div class="${categoryColors[item.category] || 'bg-slate-100'} p-0.5 rounded truncate">
-              ${item.title}
+              <strong>[${item.category}]</strong>${item.title}
             </div>
           `).join('');
         })}
@@ -488,9 +526,13 @@
           const log = store.socialLogs[key];
           if (!log || !log.hours) return '';
           if (log.status === 'completed') {
-            return `<div class="bg-amber-100 text-amber-800 p-1 rounded font-medium">已完成 ${log.hours}h</div>`;
+            return `<div class="bg-amber-100 text-amber-800 p-1 rounded font-medium">
+              <div>已完成 ${log.hours}h</div>${log.location ? `<div class="text-[9px] text-amber-600 truncate">${log.location}</div>` : ''}
+            </div>`;
           } else {
-            return `<div class="bg-amber-50 text-amber-600 border border-amber-200 p-1 rounded">預計 ${log.hours}h</div>`;
+            return `<div class="bg-amber-50 text-amber-600 border border-amber-200 p-1 rounded">
+              <div>預計 ${log.hours}h</div>${log.location ? `<div class="text-[9px] text-amber-500 truncate">${log.location}</div>` : ''}
+            </div>`;
           }
         })}
       `;
@@ -508,7 +550,6 @@
       const sch = store.schedules[dateKey] || [];
       const soc = store.socialLogs[dateKey] || {};
 
-      // 自動計算兼職時數
       const currentPtHours = calcTimeDiffHours(
         pt.startTime || store.parttimeConfig.startTime,
         pt.endTime || store.parttimeConfig.endTime,
@@ -565,7 +606,7 @@
             <textarea id="work-note" placeholder="當日備忘錄..." class="w-full p-1.5 border rounded text-xs">${work.note || ''}</textarea>
           </div>
 
-          <!-- Parttime Form (選擇時間模式) -->
+          <!-- Parttime Form -->
           <div class="border rounded-lg p-3 space-y-2 bg-white">
             <div class="font-semibold text-xs text-emerald-600 flex justify-between items-center">
               <span>兼職工作</span>
@@ -594,7 +635,7 @@
             <textarea id="pt-note" placeholder="兼職備忘錄..." class="w-full p-1.5 border rounded text-xs">${pt.note || ''}</textarea>
           </div>
 
-          <!-- Schedule Form (新增/編輯/刪除事件) -->
+          <!-- Schedule Form -->
           <div class="border rounded-lg p-3 space-y-2 bg-white">
             <div class="font-semibold text-xs text-purple-600">行程規劃</div>
             <div class="flex gap-1">
@@ -688,7 +729,6 @@
       updateParttimeCalc();
     }
 
-    // 行程的新增與修改邏輯
     function addOrUpdateScheduleItem(key) {
       const title = document.getElementById('sch-title').value.trim();
       const category = document.getElementById('sch-category').value;
@@ -697,11 +737,9 @@
       if (!store.schedules[key]) store.schedules[key] = [];
 
       if (editingScheduleIndex !== null) {
-        // 修改已有行程
         store.schedules[key][editingScheduleIndex] = { title, category };
         editingScheduleIndex = null;
       } else {
-        // 新增行程
         store.schedules[key].push({ title, category });
       }
 
@@ -745,7 +783,7 @@
         note: document.getElementById('work-note').value
       };
 
-      // Save Parttime Log (基於時間計算)
+      // Save Parttime Log
       const ptStart = document.getElementById('pt-start').value;
       const ptEnd = document.getElementById('pt-end').value;
       const ptRest = parseFloat(document.getElementById('pt-rest').value) || 0;
