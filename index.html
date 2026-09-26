@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多功能個人管理 App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-20 md:pb-6">
+
+  <!-- Header -->
+  <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
+      <h1 class="text-xl font-bold flex items-center gap-2" id="page-title">
+        <i class="fa-solid fa-chart-pie"></i> 總表儀表板
+      </h1>
+      <div class="flex items-center gap-2">
+        <button onclick="changeMonth(-1)" class="p-1.5 hover:bg-indigo-700 rounded text-sm"><i class="fa-solid fa-chevron-left"></i></button>
+        <span id="current-month-display" class="font-semibold text-sm">2026 年 09 月</span>
+        <button onclick="changeMonth(1)" class="p-1.5 hover:bg-indigo-700 rounded text-sm"><i class="fa-solid fa-chevron-right"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="max-w-4xl mx-auto p-4 space-y-6" id="app-content">
+    <!-- Dynamic Content Rendered via JS -->
+  </main>
+
+  <!-- Navigation (Desktop Top/Mobile Bottom) -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-lg md:top-14 md:bottom-auto md:border-b md:border-t-0 z-40">
+    <div class="max-w-4xl mx-auto flex justify-around">
+      <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-btn flex-1 py-2 text-center text-xs text-indigo-600 font-medium">
+        <i class="fa-solid fa-chart-pie text-lg block mb-0.5"></i>總表
+      </button>
+      <button onclick="switchTab('work')" id="nav-work" class="nav-btn flex-1 py-2 text-center text-xs text-slate-500 font-medium">
+        <i class="fa-solid fa-briefcase text-lg block mb-0.5"></i>工作
+      </button>
+      <button onclick="switchTab('parttime')" id="nav-parttime" class="nav-btn flex-1 py-2 text-center text-xs text-slate-500 font-medium">
+        <i class="fa-solid fa-clock text-lg block mb-0.5"></i>兼職
+      </button>
+      <button onclick="switchTab('schedule')" id="nav-schedule" class="nav-btn flex-1 py-2 text-center text-xs text-slate-500 font-medium">
+        <i class="fa-solid fa-calendar-days text-lg block mb-0.5"></i>行程
+      </button>
+      <button onclick="switchTab('social')" id="nav-social" class="nav-btn flex-1 py-2 text-center text-xs text-slate-500 font-medium">
+        <i class="fa-solid fa-hands-holding-child text-lg block mb-0.5"></i>社勞
+      </button>
+    </div>
+  </nav>
+
+  <!-- Global Modal -->
+  <div id="modal-backdrop" class="fixed inset-0 bg-slate-900/50 hidden z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden" id="modal-content">
+      <!-- Modal Content Rendered via JS -->
+    </div>
+  </div>
+
+  <script>
+    // App State
+    let currentDate = new Date(2026, 8, 1); // 2026 Sept default
+    let activeTab = 'dashboard';
+    let selectedCalendarDate = null;
+
+    // LocalStorage Keys & Default Data
+    const STORAGE_KEY = 'app_data_v2';
+    let store = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
+      workConfig: { monthlySalary: 45000, dailyHours: 8, startTime: '09:00', endTime: '18:00', restHours: 1 },
+      parttimeConfig: { hourlyRate: 190, startTime: '18:30', endTime: '21:30', restHours: 0 },
+      socialConfig: { annualTargetHours: 100 },
+      workLogs: {},
+      parttimeLogs: {},
+      schedules: {},
+      socialLogs: {}
+    };
+
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      render();
+    }
+
+    // Date Utilities
+    function formatDateKey(year, month, day) {
+      const m = String(month + 1).padStart(2, '0');
+      const d = String(day).padStart(2, '0');
+      return `${year}-${m}-${d}`;
+    }
+
+    function getDaysInMonth(year, month) {
+      return new Date(year, month + 1, 0).getDate();
+    }
+
+    // Get Day of week (0: Mon, 6: Sun)
+    function getStartDayOfMonth(year, month) {
+      let day = new Date(year, month, 1).getDay();
+      return day === 0 ? 6 : day - 1;
+    }
+
+    function changeMonth(delta) {
+      currentDate.setMonth(currentDate.getMonth() + delta);
+      render();
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.remove('text-indigo-600', 'border-t-2', 'border-indigo-600');
+        btn.classList.add('text-slate-500');
+      });
+      const activeBtn = document.getElementById(`nav-${tab}`);
+      if (activeBtn) {
+        activeBtn.classList.remove('text-slate-500');
+        activeBtn.classList.add('text-indigo-600', 'border-t-2', 'border-indigo-600');
+      }
+
+      const titles = {
+        dashboard: '<i class="fa-solid fa-chart-pie"></i> 總表儀表板',
+        work: '<i class="fa-solid fa-briefcase"></i> 正職工作紀錄',
+        parttime: '<i class="fa-solid fa-clock"></i> 兼職紀錄',
+        schedule: '<i class="fa-solid fa-calendar-days"></i> 行程管理',
+        social: '<i class="fa-solid fa-hands-holding-child"></i> 社會勞動紀錄'
+      };
+      document.getElementById('page-title').innerHTML = titles[tab];
+      render();
+    }
+
+    // Finance Calculations
+    function calculateWorkIncome(year, month) {
+      let totalOvertimePay = 0;
+      let totalOffDays = 0;
+      const days = getDaysInMonth(year, month);
+      const hourlyBase = store.workConfig.monthlySalary / 240;
+
+      for (let d = 1; d <= days; d++) {
+        const key = formatDateKey(year, month, d);
+        const log = store.workLogs[key];
+        if (log) {
+          if (log.isOff) {
+            totalOffDays++;
+          }
+          if (log.overtimeHours) {
+            const rate = log.isRestDay ? 1.67 : 1.34;
+            totalOvertimePay += log.overtimeHours * hourlyBase * rate;
+          }
+        }
+      }
+      return {
+        base: store.workConfig.monthlySalary,
+        overtime: Math.round(totalOvertimePay),
+        total: Math.round(store.workConfig.monthlySalary + totalOvertimePay),
+        offDays: totalOffDays
+      };
+    }
+
+    function calculateParttimeIncome(year, month) {
+      let total = 0;
+      const days = getDaysInMonth(year, month);
+      for (let d = 1; d <= days; d++) {
+        const key = formatDateKey(year, month, d);
+        const log = store.parttimeLogs[key];
+        if (log && log.hours) {
+          const rate = log.isNationalHoliday ? store.parttimeConfig.hourlyRate * 2 : store.parttimeConfig.hourlyRate;
+          total += log.hours * rate;
+        }
+      }
+      return Math.round(total);
+    }
+
+    function calculateSocialHours(year, month) {
+      let monthlyActual = 0;
+      let monthlyPending = 0;
+      let annualActual = 0;
+
+      // Calculate monthly
+      const days = getDaysInMonth(year, month);
+      for (let d = 1; d <= days; d++) {
+        const key = formatDateKey(year, month, d);
+        const log = store.socialLogs[key];
+        if (log) {
+          if (log.status === 'completed') {
+            monthlyActual += (parseFloat(log.hours) || 0);
+          } else if (log.status === 'pending') {
+            monthlyPending += (parseFloat(log.hours) || 0);
+          }
+        }
+      }
+
+      // Calculate annual actual hours
+      Object.keys(store.socialLogs).forEach(key => {
+        if (key.startsWith(`${year}-`)) {
+          const log = store.socialLogs[key];
+          if (log && log.status === 'completed') {
+            annualActual += (parseFloat(log.hours) || 0);
+          }
+        }
+      });
+
+      return {
+        monthlyActual,
+        monthlyPending,
+        annualActual,
+        target: store.socialConfig.annualTargetHours,
+        remaining: Math.max(0, store.socialConfig.annualTargetHours - annualActual)
+      };
+    }
+
+    // Render Components
+    function renderCalendar(year, month, customDayRenderer) {
+      const daysInMonth = getDaysInMonth(year, month);
+      const startDay = getStartDayOfMonth(year, month);
+      const weekDays = ['一', '二', '三', '四', '五', '六', '日'];
+
+      let html = `<div class="bg-white rounded-xl shadow p-4">
+        <div class="grid grid-cols-7 gap-1 text-center font-bold text-slate-500 mb-2 text-sm">
+          ${weekDays.map(d => `<div>${d}</div>`).join('')}
+        </div>
+        <div class="grid grid-cols-7 gap-1">`;
+
+      for (let i = 0; i < startDay; i++) {
+        html += `<div class="h-20 md:h-24 bg-slate-50 rounded-lg opacity-40"></div>`;
+      }
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const key = formatDateKey(year, month, day);
+        const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
+        const content = customDayRenderer ? customDayRenderer(key, day) : '';
+
+        html += `
+          <div onclick="openDateModal('${key}')" class="h-20 md:h-24 p-1 border border-slate-100 rounded-lg hover:border-indigo-400 transition cursor-pointer bg-white flex flex-col justify-between overflow-hidden ${isToday ? 'ring-2 ring-indigo-500' : ''}">
+            <span class="text-xs font-semibold ${isToday ? 'text-indigo-600' : 'text-slate-700'}">${day}</span>
+            <div class="flex-1 overflow-y-auto hide-scrollbar text-[10px] space-y-0.5 mt-0.5">
+              ${content}
+            </div>
+          </div>`;
+      }
+
+      html += `</div></div>`;
+      return html;
+    }
+
+    // Tab Renderers
+    function renderDashboard() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+
+      const workStats = calculateWorkIncome(year, month);
+      const parttimeIncome = calculateParttimeIncome(year, month);
+      const socialStats = calculateSocialHours(year, month);
+      const totalIncome = workStats.total + parttimeIncome;
+
+      const dateStr = `${year} 年 ${month + 1} 月`;
+      document.getElementById('current-month-display').innerText = dateStr;
+
+      return `
+        <!-- Income Summary Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="bg-white p-4 rounded-xl shadow border-l-4 border-indigo-500">
+            <div class="text-xs text-slate-500 font-medium">當月預估總收入</div>
+            <div class="text-xl font-bold text-indigo-600 mt-1">$${totalIncome.toLocaleString()}</div>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow border-l-4 border-blue-500">
+            <div class="text-xs text-slate-500 font-medium">正職收入 (含加班)</div>
+            <div class="text-xl font-bold text-blue-600 mt-1">$${workStats.total.toLocaleString()}</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">加班費: $${workStats.overtime}</div>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow border-l-4 border-emerald-500">
+            <div class="text-xs text-slate-500 font-medium">兼職收入</div>
+            <div class="text-xl font-bold text-emerald-600 mt-1">$${parttimeIncome.toLocaleString()}</div>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow border-l-4 border-amber-500">
+            <div class="text-xs text-slate-500 font-medium">休假日數 / 社勞累積</div>
+            <div class="text-lg font-bold text-amber-600 mt-1">${workStats.offDays} 天 / ${socialStats.monthlyActual} 小時</div>
+          </div>
+        </div>
+
+        <!-- Integrated Calendar -->
+        ${renderCalendar(year, month, (key, day) => {
+          let tags = '';
+          const work = store.workLogs[key];
+          if (work) {
+            if (work.isOff) tags += `<div class="bg-rose-100 text-rose-700 px-1 rounded">休假: ${work.offType||'請假'}</div>`;
+            else if (work.overtimeHours) tags += `<div class="bg-blue-100 text-blue-700 px-1 rounded">加班 ${work.overtimeHours}h</div>`;
+          }
+
+          const pt = store.parttimeLogs[key];
+          if (pt && pt.hours) {
+            tags += `<div class="bg-emerald-100 text-emerald-700 px-1 rounded">兼職 ${pt.hours}h</div>`;
+          }
+
+          const sch = store.schedules[key];
+          if (sch && sch.length) {
+            sch.forEach(s => {
+              tags += `<div class="bg-purple-100 text-purple-700 px-1 rounded truncate">${s.title}</div>`;
+            });
+          }
+
+          const soc = store.socialLogs[key];
+          if (soc && soc.hours) {
+            if (soc.status === 'completed') {
+              tags += `<div class="bg-amber-100 text-amber-800 px-1 rounded">社勞 ${soc.hours}h</div>`;
+            } else {
+              tags += `<div class="bg-amber-50 text-amber-600 border border-amber-200 px-1 rounded">預計社勞 ${soc.hours}h</div>`;
+            }
+          }
+          return tags;
+        })}
+      `;
+    }
+
+    function renderWork() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+
+      return `
+        <!-- Config Section -->
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+          <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-sliders text-indigo-500"></i> 工作薪資與工時預設設定
+          </h3>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div>
+              <label class="text-slate-500 block mb-1">月薪 (NT$)</label>
+              <input type="number" value="${store.workConfig.monthlySalary}" onchange="updateWorkConfig('monthlySalary', this.value)" class="w-full p-2 border rounded font-semibold text-slate-700">
+            </div>
+            <div>
+              <label class="text-slate-500 block mb-1">每日基本工時 (時)</label>
+              <input type="number" value="${store.workConfig.dailyHours}" onchange="updateWorkConfig('dailyHours', this.value)" class="w-full p-2 border rounded">
+            </div>
+            <div>
+              <label class="text-slate-500 block mb-1">預設上班時間</label>
+              <input type="time" value="${store.workConfig.startTime}" onchange="updateWorkConfig('startTime', this.value)" class="w-full p-2 border rounded">
+            </div>
+            <div>
+              <label class="text-slate-500 block mb-1">預設下班時間</label>
+              <input type="time" value="${store.workConfig.endTime}" onchange="updateWorkConfig('endTime', this.value)" class="w-full p-2 border rounded">
+            </div>
+          </div>
+        </div>
+
+        <!-- Work Calendar -->
+        ${renderCalendar(year, month, (key) => {
+          const log = store.workLogs[key];
+          if (!log) return '';
+          if (log.isOff) return `<div class="bg-rose-100 text-rose-700 p-1 rounded font-medium">${log.offType || '休假'}</div>`;
+          let res = `<div class="text-slate-600">${log.startTime || store.workConfig.startTime}</div>`;
+          if (log.overtimeHours) res += `<div class="bg-blue-100 text-blue-700 p-0.5 rounded">加 ${log.overtimeHours}h</div>`;
+          return res;
+        })}
+      `;
+    }
+
+    function renderParttime() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+
+      return `
+        <!-- Parttime Config -->
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+          <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-clock text-emerald-500"></i> 兼職時薪設定
+          </h3>
+          <div class="grid grid-cols-3 gap-3 text-xs">
+            <div>
+              <label class="text-slate-500 block mb-1">時薪 (NT$)</label>
+              <input type="number" value="${store.parttimeConfig.hourlyRate}" onchange="updateParttimeConfig('hourlyRate', this.value)" class="w-full p-2 border rounded font-semibold">
+            </div>
+            <div>
+              <label class="text-slate-500 block mb-1">預設上班時間</label>
+              <input type="time" value="${store.parttimeConfig.startTime}" onchange="updateParttimeConfig('startTime', this.value)" class="w-full p-2 border rounded">
+            </div>
+            <div>
+              <label class="text-slate-500 block mb-1">預設下班時間</label>
+              <input type="time" value="${store.parttimeConfig.endTime}" onchange="updateParttimeConfig('endTime', this.value)" class="w-full p-2 border rounded">
+            </div>
+          </div>
+        </div>
+
+        ${renderCalendar(year, month, (key) => {
+          const log = store.parttimeLogs[key];
+          if (!log || !log.hours) return '';
+          let rateNote = log.isNationalHoliday ? ' (雙倍)' : '';
+          return `<div class="bg-emerald-100 text-emerald-800 p-1 rounded">${log.hours} 小時${rateNote}</div>`;
+        })}
+      `;
+    }
+
+    function renderSchedule() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+
+      return `
+        <div class="bg-white p-3 rounded-xl shadow flex items-center justify-between text-xs">
+          <span class="text-slate-500">標籤說明：</span>
+          <div class="flex gap-2">
+            <span class="bg-sky-100 text-sky-700 px-2 py-0.5 rounded">出遊</span>
+            <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded">朋友</span>
+            <span class="bg-amber-100 text-amber-700 px-2 py-0.5 rounded">家人</span>
+            <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded">事情</span>
+          </div>
+        </div>
+
+        ${renderCalendar(year, month, (key) => {
+          const list = store.schedules[key];
+          if (!list || !list.length) return '';
+          const categoryColors = {
+            '出遊': 'bg-sky-100 text-sky-700',
+            '朋友': 'bg-purple-100 text-purple-700',
+            '家人': 'bg-amber-100 text-amber-700',
+            '事情': 'bg-slate-100 text-slate-700'
+          };
+          return list.map(item => `
+            <div class="${categoryColors[item.category] || 'bg-slate-100'} p-0.5 rounded truncate">
+              ${item.title}
+            </div>
+          `).join('');
+        })}
+      `;
+    }
+
+    function renderSocial() {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const stats = calculateSocialHours(year, month);
+      const progressPercent = Math.min(100, Math.round((stats.annualActual / stats.target) * 100));
+
+      return `
+        <!-- Stats Dashboard -->
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+          <div class="flex justify-between items-center">
+            <h3 class="font-bold text-slate-700 text-sm">社會勞動完成進度</h3>
+            <div class="text-xs text-slate-500">年度目標: 
+              <input type="number" value="${stats.target}" onchange="updateSocialTarget(this.value)" class="w-16 p-1 border rounded text-center font-bold"> 小時
+            </div>
+          </div>
+
+          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div class="bg-amber-500 h-3 rounded-full transition-all duration-300" style="width: ${progressPercent}%"></div>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center pt-2">
+            <div class="bg-amber-50 p-2 rounded-lg border border-amber-200">
+              <div class="text-[10px] text-amber-600">當月已核入時數</div>
+              <div class="text-lg font-bold text-amber-700">${stats.monthlyActual} h</div>
+            </div>
+            <div class="bg-amber-50/50 p-2 rounded-lg border border-amber-100">
+              <div class="text-[10px] text-amber-600">當月預計安排</div>
+              <div class="text-lg font-bold text-amber-500">${stats.monthlyPending} h</div>
+            </div>
+            <div class="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+              <div class="text-[10px] text-emerald-600">年度累計完成</div>
+              <div class="text-lg font-bold text-emerald-700">${stats.annualActual} h</div>
+            </div>
+            <div class="bg-rose-50 p-2 rounded-lg border border-rose-200">
+              <div class="text-[10px] text-rose-600">剩餘所需時數</div>
+              <div class="text-lg font-bold text-rose-700">${stats.remaining} h</div>
+            </div>
+          </div>
+        </div>
+
+        ${renderCalendar(year, month, (key) => {
+          const log = store.socialLogs[key];
+          if (!log || !log.hours) return '';
+          if (log.status === 'completed') {
+            return `<div class="bg-amber-100 text-amber-800 p-1 rounded font-medium">已完成 ${log.hours}h</div>`;
+          } else {
+            return `<div class="bg-amber-50 text-amber-600 border border-amber-200 p-1 rounded">預計 ${log.hours}h</div>`;
+          }
+        })}
+      `;
+    }
+
+    // Modal Operations
+    function openDateModal(dateKey) {
+      selectedCalendarDate = dateKey;
+      const modal = document.getElementById('modal-backdrop');
+      const content = document.getElementById('modal-content');
+
+      const work = store.workLogs[dateKey] || {};
+      const pt = store.parttimeLogs[dateKey] || {};
+      const sch = store.schedules[dateKey] || [];
+      const soc = store.socialLogs[dateKey] || {};
+
+      content.innerHTML = `
+        <div class="bg-slate-50 px-4 py-3 border-b flex justify-between items-center">
+          <h3 class="font-bold text-slate-700">${dateKey} 日期紀錄管理</h3>
+          <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <div class="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
+          <!-- Work Form -->
+          <div class="border rounded-lg p-3 space-y-2 bg-white">
+            <div class="font-semibold text-xs text-blue-600 flex justify-between items-center">
+              <span>正職工作</span>
+              <label class="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" id="work-isOff" ${work.isOff ? 'checked' : ''} onchange="toggleWorkOff(this.checked)"> 當天休假
+              </label>
+            </div>
+            <div id="work-form-body" class="${work.isOff ? 'hidden' : 'space-y-2'}">
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label class="text-slate-400">上班時間</label>
+                  <input type="time" id="work-start" value="${work.startTime || store.workConfig.startTime}" class="w-full p-1 border rounded">
+                </div>
+                <div>
+                  <label class="text-slate-400">下班時間</label>
+                  <input type="time" id="work-end" value="${work.endTime || store.workConfig.endTime}" class="w-full p-1 border rounded">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label class="text-slate-400">加班時數 (小時)</label>
+                  <input type="number" step="0.5" id="work-ot" value="${work.overtimeHours || 0}" class="w-full p-1 border rounded">
+                </div>
+                <div class="flex items-end">
+                  <label class="flex items-center gap-1 text-slate-600 cursor-pointer mb-1">
+                    <input type="checkbox" id="work-isRestDay" ${work.isRestDay ? 'checked' : ''}> 休息日加班
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div id="work-off-body" class="${!work.isOff ? 'hidden' : 'space-y-2'}">
+              <label class="text-xs text-slate-400">休假種類</label>
+              <select id="work-offType" class="w-full p-1.5 border rounded text-xs">
+                <option value="特休" ${work.offType === '特休' ? 'selected' : ''}>特休</option>
+                <option value="事假" ${work.offType === '事假' ? 'selected' : ''}>事假</option>
+                <option value="病假" ${work.offType === '病假' ? 'selected' : ''}>病假</option>
+                <option value="例假日" ${work.offType === '例假日' ? 'selected' : ''}>例假日</option>
+              </select>
+            </div>
+            <textarea id="work-note" placeholder="當日備忘錄..." class="w-full p-1.5 border rounded text-xs">${work.note || ''}</textarea>
+          </div>
+
+          <!-- Parttime Form -->
+          <div class="border rounded-lg p-3 space-y-2 bg-white">
+            <div class="font-semibold text-xs text-emerald-600">兼職工作</div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label class="text-slate-400">當日工時 (小時)</label>
+                <input type="number" step="0.5" id="pt-hours" value="${pt.hours || ''}" class="w-full p-1 border rounded">
+              </div>
+              <div class="flex items-end">
+                <label class="flex items-center gap-1 text-slate-600 cursor-pointer mb-1">
+                  <input type="checkbox" id="pt-isNationalHoliday" ${pt.isNationalHoliday ? 'checked' : ''}> 國定假日 (雙倍)
+                </label>
+              </div>
+            </div>
+            <textarea id="pt-note" placeholder="兼職備忘錄..." class="w-full p-1.5 border rounded text-xs">${pt.note || ''}</textarea>
+          </div>
+
+          <!-- Schedule Form -->
+          <div class="border rounded-lg p-3 space-y-2 bg-white">
+            <div class="font-semibold text-xs text-purple-600">行程規劃</div>
+            <div class="flex gap-1">
+              <select id="sch-category" class="p-1 border rounded text-xs">
+                <option value="出遊">出遊</option>
+                <option value="朋友">朋友</option>
+                <option value="家人">家人</option>
+                <option value="事情">事情</option>
+              </select>
+              <input type="text" id="sch-title" placeholder="新增行程名稱..." class="flex-1 p-1 border rounded text-xs">
+              <button onclick="addScheduleItem('${dateKey}')" class="bg-purple-600 text-white px-2 py-1 rounded text-xs">新增</button>
+            </div>
+            <div class="space-y-1">
+              ${sch.map((item, idx) => `
+                <div class="flex justify-between items-center bg-slate-50 p-1.5 rounded text-xs">
+                  <span><strong class="text-purple-600">[${item.category}]</strong>${item.title}</span>
+                  <button onclick="removeScheduleItem('${dateKey}',${idx})" class="text-rose-500 hover:text-rose-700"><i class="fa-solid fa-trash"></i></button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Social Service Form -->
+          <div class="border rounded-lg p-3 space-y-2 bg-white">
+            <div class="font-semibold text-xs text-amber-600 flex justify-between items-center">
+              <span>社會勞動</span>
+              ${soc.hours ? `
+                <span class="text-[10px] px-2 py-0.5 rounded ${soc.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                  ${soc.status === 'completed' ? '已核入時數' : '預計安排中'}
+                </span>
+              ` : ''}
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label class="text-slate-400">預計/服務時數 (小時)</label>
+                <input type="number" step="0.5" id="soc-hours" value="${soc.hours || ''}" placeholder="例如: 4" class="w-full p-1 border rounded">
+              </div>
+              <div>
+                <label class="text-slate-400">當前狀態設定</label>
+                <select id="soc-status" class="w-full p-1 border rounded">
+                  <option value="pending" ${soc.status === 'pending' || !soc.status ? 'selected' : ''}>預計安排 (未核入)</option>
+                  <option value="completed" ${soc.status === 'completed' ? 'selected' : ''}>已完成 (正式核入)</option>
+                </select>
+              </div>
+            </div>
+
+            ${soc.hours && soc.status === 'pending' ? `
+              <button onclick="confirmSocialCompleted('${dateKey}')" class="w-full py-1 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700 transition">
+                <i class="fa-solid fa-circle-check"></i> 當日完成核驗，將時數納入計算
+              </button>
+            ` : ''}
+
+            <input type="text" id="soc-location" value="${soc.location || ''}" placeholder="服務地點 / 單位..." class="w-full p-1.5 border rounded text-xs">
+          </div>
+        </div>
+
+        <div class="bg-slate-50 px-4 py-3 border-t flex justify-end gap-2">
+          <button onclick="closeModal()" class="px-3 py-1.5 border rounded text-xs text-slate-600">取消</button>
+          <button onclick="saveDateModal('${dateKey}')" class="px-4 py-1.5 bg-indigo-600 text-white rounded text-xs font-medium hover:bg-indigo-700">儲存變更</button>
+        </div>
+      `;
+
+      modal.classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-backdrop').classList.add('hidden');
+    }
+
+    function toggleWorkOff(isOff) {
+      document.getElementById('work-form-body').classList.toggle('hidden', isOff);
+      document.getElementById('work-off-body').classList.toggle('hidden', !isOff);
+    }
+
+    function saveDateModal(key) {
+      // Save Work Log
+      const isOff = document.getElementById('work-isOff').checked;
+      store.workLogs[key] = {
+        isOff,
+        offType: isOff ? document.getElementById('work-offType').value : null,
+        startTime: document.getElementById('work-start').value,
+        endTime: document.getElementById('work-end').value,
+        overtimeHours: parseFloat(document.getElementById('work-ot').value) || 0,
+        isRestDay: document.getElementById('work-isRestDay').checked,
+        note: document.getElementById('work-note').value
+      };
+
+      // Save Parttime Log
+      const ptHours = parseFloat(document.getElementById('pt-hours').value);
+      if (ptHours) {
+        store.parttimeLogs[key] = {
+          hours: ptHours,
+          isNationalHoliday: document.getElementById('pt-isNationalHoliday').checked,
+          note: document.getElementById('pt-note').value
+        };
+      } else {
+        delete store.parttimeLogs[key];
+      }
+
+      // Save Social Log
+      const socHours = parseFloat(document.getElementById('soc-hours').value);
+      if (socHours) {
+        store.socialLogs[key] = {
+          hours: socHours,
+          status: document.getElementById('soc-status').value,
+          location: document.getElementById('soc-location').value
+        };
+      } else {
+        delete store.socialLogs[key];
+      }
+
+      saveData();
+      closeModal();
+    }
+
+    function confirmSocialCompleted(key) {
+      if (store.socialLogs[key]) {
+        store.socialLogs[key].status = 'completed';
+        saveData();
+        openDateModal(key);
+      }
+    }
+
+    function addScheduleItem(key) {
+      const title = document.getElementById('sch-title').value.trim();
+      const category = document.getElementById('sch-category').value;
+      if (!title) return;
+
+      if (!store.schedules[key]) store.schedules[key] = [];
+      store.schedules[key].push({ title, category });
+      saveData();
+      openDateModal(key);
+    }
+
+    function removeScheduleItem(key, idx) {
+      if (store.schedules[key]) {
+        store.schedules[key].splice(idx, 1);
+        if (store.schedules[key].length === 0) delete store.schedules[key];
+        saveData();
+        openDateModal(key);
+      }
+    }
+
+    // Config Updaters
+    function updateWorkConfig(field, val) {
+      store.workConfig[field] = field === 'monthlySalary' || field === 'dailyHours' ? parseFloat(val) : val;
+      saveData();
+    }
+
+    function updateParttimeConfig(field, val) {
+      store.parttimeConfig[field] = field === 'hourlyRate' ? parseFloat(val) : val;
+      saveData();
+    }
+
+    function updateSocialTarget(val) {
+      store.socialConfig.annualTargetHours = parseFloat(val) || 0;
+      saveData();
+    }
+
+    // Main Render Dispatcher
+    function render() {
+      const main = document.getElementById('app-content');
+      switch (activeTab) {
+        case 'dashboard': main.innerHTML = renderDashboard(); break;
+        case 'work': main.innerHTML = renderWork(); break;
+        case 'parttime': main.innerHTML = renderParttime(); break;
+        case 'schedule': main.innerHTML = renderSchedule(); break;
+        case 'social': main.innerHTML = renderSocial(); break;
+      }
+    }
+
+    // Initial Load
+    render();
+  </script>
+</body>
+</html>
