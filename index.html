@@ -66,12 +66,13 @@
     let currentDate = new Date(2026, 8, 1); // 2026 Sept default
     let activeTab = 'dashboard';
     let selectedCalendarDate = null;
+    let editingScheduleIndex = null; // 追蹤目前正在編輯的行程索引
 
     // LocalStorage Keys & Default Data
-    const STORAGE_KEY = 'app_data_v2';
+    const STORAGE_KEY = 'app_data_v3';
     let store = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
       workConfig: { monthlySalary: 45000, dailyHours: 8, startTime: '09:00', endTime: '18:00', restHours: 1 },
-      parttimeConfig: { hourlyRate: 190, startTime: '18:30', endTime: '21:30', restHours: 0 },
+      parttimeConfig: { hourlyRate: 190, startTime: '18:30', endTime: '21:30', restMinutes: 0 },
       socialConfig: { annualTargetHours: 100 },
       workLogs: {},
       parttimeLogs: {},
@@ -82,6 +83,23 @@
     function saveData() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
       render();
+    }
+
+    // 時間計算工具：輸入 "09:00", "18:00", 休息分鐘，計算出小數點工時
+    function calcTimeDiffHours(startStr, endStr, restMins = 0) {
+      if (!startStr || !endStr) return 0;
+      const [sH, sM] = startStr.split(':').map(Number);
+      const [eH, eM] = endStr.split(':').map(Number);
+      
+      let startTotal = sH * 60 + sM;
+      let endTotal = eH * 60 + eM;
+
+      if (endTotal < startTotal) {
+        endTotal += 24 * 60; // 跨夜處理
+      }
+
+      const diffMins = endTotal - startTotal - (parseFloat(restMins) || 0);
+      return Math.max(0, Math.round((diffMins / 60) * 10) / 10); // 四捨五入到小數一位
     }
 
     // Date Utilities
@@ -95,7 +113,6 @@
       return new Date(year, month + 1, 0).getDate();
     }
 
-    // Get Day of week (0: Mon, 6: Sun)
     function getStartDayOfMonth(year, month) {
       let day = new Date(year, month, 1).getDay();
       return day === 0 ? 6 : day - 1;
@@ -163,9 +180,10 @@
       for (let d = 1; d <= days; d++) {
         const key = formatDateKey(year, month, d);
         const log = store.parttimeLogs[key];
-        if (log && log.hours) {
+        if (log && log.startTime && log.endTime) {
+          const hours = calcTimeDiffHours(log.startTime, log.endTime, log.restMinutes || 0);
           const rate = log.isNationalHoliday ? store.parttimeConfig.hourlyRate * 2 : store.parttimeConfig.hourlyRate;
-          total += log.hours * rate;
+          total += hours * rate;
         }
       }
       return Math.round(total);
@@ -176,7 +194,6 @@
       let monthlyPending = 0;
       let annualActual = 0;
 
-      // Calculate monthly
       const days = getDaysInMonth(year, month);
       for (let d = 1; d <= days; d++) {
         const key = formatDateKey(year, month, d);
@@ -190,7 +207,6 @@
         }
       }
 
-      // Calculate annual actual hours
       Object.keys(store.socialLogs).forEach(key => {
         if (key.startsWith(`${year}-`)) {
           const log = store.socialLogs[key];
@@ -279,17 +295,18 @@
         </div>
 
         <!-- Integrated Calendar -->
-        ${renderCalendar(year, month, (key, day) => {
+        ${renderCalendar(year, month, (key) => {
           let tags = '';
           const work = store.workLogs[key];
           if (work) {
-            if (work.isOff) tags += `<div class="bg-rose-100 text-rose-700 px-1 rounded">休假: ${work.offType||'請假'}</div>`;
+            if (work.isOff) tags += `<div class="bg-rose-100 text-rose-700 px-1 rounded">休: ${work.offType||'請假'}</div>`;
             else if (work.overtimeHours) tags += `<div class="bg-blue-100 text-blue-700 px-1 rounded">加班 ${work.overtimeHours}h</div>`;
           }
 
           const pt = store.parttimeLogs[key];
-          if (pt && pt.hours) {
-            tags += `<div class="bg-emerald-100 text-emerald-700 px-1 rounded">兼職 ${pt.hours}h</div>`;
+          if (pt && pt.startTime && pt.endTime) {
+            const h = calcTimeDiffHours(pt.startTime, pt.endTime, pt.restMinutes || 0);
+            if (h > 0) tags += `<div class="bg-emerald-100 text-emerald-700 px-1 rounded">兼職 ${h}h</div>`;
           }
 
           const sch = store.schedules[key];
@@ -342,7 +359,6 @@
           </div>
         </div>
 
-        <!-- Work Calendar -->
         ${renderCalendar(year, month, (key) => {
           const log = store.workLogs[key];
           if (!log) return '';
@@ -362,9 +378,9 @@
         <!-- Parttime Config -->
         <div class="bg-white p-4 rounded-xl shadow space-y-3">
           <h3 class="font-bold text-slate-700 text-sm flex items-center gap-2">
-            <i class="fa-solid fa-clock text-emerald-500"></i> 兼職時薪設定
+            <i class="fa-solid fa-clock text-emerald-500"></i> 兼職時薪與預設時間
           </h3>
-          <div class="grid grid-cols-3 gap-3 text-xs">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <div>
               <label class="text-slate-500 block mb-1">時薪 (NT$)</label>
               <input type="number" value="${store.parttimeConfig.hourlyRate}" onchange="updateParttimeConfig('hourlyRate', this.value)" class="w-full p-2 border rounded font-semibold">
@@ -377,14 +393,20 @@
               <label class="text-slate-500 block mb-1">預設下班時間</label>
               <input type="time" value="${store.parttimeConfig.endTime}" onchange="updateParttimeConfig('endTime', this.value)" class="w-full p-2 border rounded">
             </div>
+            <div>
+              <label class="text-slate-500 block mb-1">預設休息 (分鐘)</label>
+              <input type="number" value="${store.parttimeConfig.restMinutes || 0}" onchange="updateParttimeConfig('restMinutes', this.value)" class="w-full p-2 border rounded">
+            </div>
           </div>
         </div>
 
         ${renderCalendar(year, month, (key) => {
           const log = store.parttimeLogs[key];
-          if (!log || !log.hours) return '';
+          if (!log || !log.startTime || !log.endTime) return '';
+          const hours = calcTimeDiffHours(log.startTime, log.endTime, log.restMinutes || 0);
+          if (hours <= 0) return '';
           let rateNote = log.isNationalHoliday ? ' (雙倍)' : '';
-          return `<div class="bg-emerald-100 text-emerald-800 p-1 rounded">${log.hours} 小時${rateNote}</div>`;
+          return `<div class="bg-emerald-100 text-emerald-800 p-1 rounded">${hours}h (${log.startTime})${rateNote}</div>`;
         })}
       `;
     }
@@ -477,6 +499,7 @@
     // Modal Operations
     function openDateModal(dateKey) {
       selectedCalendarDate = dateKey;
+      editingScheduleIndex = null;
       const modal = document.getElementById('modal-backdrop');
       const content = document.getElementById('modal-content');
 
@@ -484,6 +507,13 @@
       const pt = store.parttimeLogs[dateKey] || {};
       const sch = store.schedules[dateKey] || [];
       const soc = store.socialLogs[dateKey] || {};
+
+      // 自動計算兼職時數
+      const currentPtHours = calcTimeDiffHours(
+        pt.startTime || store.parttimeConfig.startTime,
+        pt.endTime || store.parttimeConfig.endTime,
+        pt.restMinutes !== undefined ? pt.restMinutes : store.parttimeConfig.restMinutes
+      );
 
       content.innerHTML = `
         <div class="bg-slate-50 px-4 py-3 border-b flex justify-between items-center">
@@ -535,24 +565,36 @@
             <textarea id="work-note" placeholder="當日備忘錄..." class="w-full p-1.5 border rounded text-xs">${work.note || ''}</textarea>
           </div>
 
-          <!-- Parttime Form -->
+          <!-- Parttime Form (選擇時間模式) -->
           <div class="border rounded-lg p-3 space-y-2 bg-white">
-            <div class="font-semibold text-xs text-emerald-600">兼職工作</div>
-            <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="font-semibold text-xs text-emerald-600 flex justify-between items-center">
+              <span>兼職工作</span>
+              <span id="pt-calculated-hours" class="text-emerald-700 font-bold text-[11px]">小計: ${currentPtHours} 小時</span>
+            </div>
+            <div class="grid grid-cols-3 gap-2 text-xs">
               <div>
-                <label class="text-slate-400">當日工時 (小時)</label>
-                <input type="number" step="0.5" id="pt-hours" value="${pt.hours || ''}" class="w-full p-1 border rounded">
+                <label class="text-slate-400">上班時間</label>
+                <input type="time" id="pt-start" value="${pt.startTime || store.parttimeConfig.startTime}" onchange="updateParttimeCalc()" class="w-full p-1 border rounded">
               </div>
-              <div class="flex items-end">
-                <label class="flex items-center gap-1 text-slate-600 cursor-pointer mb-1">
-                  <input type="checkbox" id="pt-isNationalHoliday" ${pt.isNationalHoliday ? 'checked' : ''}> 國定假日 (雙倍)
-                </label>
+              <div>
+                <label class="text-slate-400">下班時間</label>
+                <input type="time" id="pt-end" value="${pt.endTime || store.parttimeConfig.endTime}" onchange="updateParttimeCalc()" class="w-full p-1 border rounded">
               </div>
+              <div>
+                <label class="text-slate-400">休息(分鐘)</label>
+                <input type="number" id="pt-rest" value="${pt.restMinutes !== undefined ? pt.restMinutes : (store.parttimeConfig.restMinutes || 0)}" onchange="updateParttimeCalc()" class="w-full p-1 border rounded">
+              </div>
+            </div>
+            <div class="flex items-center justify-between text-xs pt-1">
+              <label class="flex items-center gap-1 text-slate-600 cursor-pointer">
+                <input type="checkbox" id="pt-isNationalHoliday" ${pt.isNationalHoliday ? 'checked' : ''}> 國定假日 (加倍算)
+              </label>
+              <button type="button" onclick="clearParttimeData()" class="text-slate-400 hover:text-rose-500 text-[11px]">清除當日兼職</button>
             </div>
             <textarea id="pt-note" placeholder="兼職備忘錄..." class="w-full p-1.5 border rounded text-xs">${pt.note || ''}</textarea>
           </div>
 
-          <!-- Schedule Form -->
+          <!-- Schedule Form (新增/編輯/刪除事件) -->
           <div class="border rounded-lg p-3 space-y-2 bg-white">
             <div class="font-semibold text-xs text-purple-600">行程規劃</div>
             <div class="flex gap-1">
@@ -562,14 +604,17 @@
                 <option value="家人">家人</option>
                 <option value="事情">事情</option>
               </select>
-              <input type="text" id="sch-title" placeholder="新增行程名稱..." class="flex-1 p-1 border rounded text-xs">
-              <button onclick="addScheduleItem('${dateKey}')" class="bg-purple-600 text-white px-2 py-1 rounded text-xs">新增</button>
+              <input type="text" id="sch-title" placeholder="新增/修改行程名稱..." class="flex-1 p-1 border rounded text-xs">
+              <button type="button" id="sch-submit-btn" onclick="addOrUpdateScheduleItem('${dateKey}')" class="bg-purple-600 text-white px-2 py-1 rounded text-xs">新增</button>
             </div>
             <div class="space-y-1">
               ${sch.map((item, idx) => `
                 <div class="flex justify-between items-center bg-slate-50 p-1.5 rounded text-xs">
                   <span><strong class="text-purple-600">[${item.category}]</strong>${item.title}</span>
-                  <button onclick="removeScheduleItem('${dateKey}',${idx})" class="text-rose-500 hover:text-rose-700"><i class="fa-solid fa-trash"></i></button>
+                  <div class="flex gap-2 text-slate-400">
+                    <button type="button" onclick="startEditSchedule('${dateKey}',${idx})" class="hover:text-indigo-600"><i class="fa-solid fa-pen-to-square"></i></button>
+                    <button type="button" onclick="removeScheduleItem('${dateKey}',${idx})" class="hover:text-rose-600"><i class="fa-solid fa-trash"></i></button>
+                  </div>
                 </div>
               `).join('')}
             </div>
@@ -601,7 +646,7 @@
             </div>
 
             ${soc.hours && soc.status === 'pending' ? `
-              <button onclick="confirmSocialCompleted('${dateKey}')" class="w-full py-1 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700 transition">
+              <button type="button" onclick="confirmSocialCompleted('${dateKey}')" class="w-full py-1 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700 transition">
                 <i class="fa-solid fa-circle-check"></i> 當日完成核驗，將時數納入計算
               </button>
             ` : ''}
@@ -611,8 +656,8 @@
         </div>
 
         <div class="bg-slate-50 px-4 py-3 border-t flex justify-end gap-2">
-          <button onclick="closeModal()" class="px-3 py-1.5 border rounded text-xs text-slate-600">取消</button>
-          <button onclick="saveDateModal('${dateKey}')" class="px-4 py-1.5 bg-indigo-600 text-white rounded text-xs font-medium hover:bg-indigo-700">儲存變更</button>
+          <button type="button" onclick="closeModal()" class="px-3 py-1.5 border rounded text-xs text-slate-600">取消</button>
+          <button type="button" onclick="saveDateModal('${dateKey}')" class="px-4 py-1.5 bg-indigo-600 text-white rounded text-xs font-medium hover:bg-indigo-700">儲存變更</button>
         </div>
       `;
 
@@ -628,6 +673,65 @@
       document.getElementById('work-off-body').classList.toggle('hidden', !isOff);
     }
 
+    function updateParttimeCalc() {
+      const s = document.getElementById('pt-start').value;
+      const e = document.getElementById('pt-end').value;
+      const r = document.getElementById('pt-rest').value;
+      const h = calcTimeDiffHours(s, e, r);
+      document.getElementById('pt-calculated-hours').innerText = `小計: ${h} 小時`;
+    }
+
+    function clearParttimeData() {
+      document.getElementById('pt-start').value = '';
+      document.getElementById('pt-end').value = '';
+      document.getElementById('pt-rest').value = 0;
+      updateParttimeCalc();
+    }
+
+    // 行程的新增與修改邏輯
+    function addOrUpdateScheduleItem(key) {
+      const title = document.getElementById('sch-title').value.trim();
+      const category = document.getElementById('sch-category').value;
+      if (!title) return;
+
+      if (!store.schedules[key]) store.schedules[key] = [];
+
+      if (editingScheduleIndex !== null) {
+        // 修改已有行程
+        store.schedules[key][editingScheduleIndex] = { title, category };
+        editingScheduleIndex = null;
+      } else {
+        // 新增行程
+        store.schedules[key].push({ title, category });
+      }
+
+      saveData();
+      openDateModal(key);
+    }
+
+    function startEditSchedule(key, idx) {
+      const item = store.schedules[key][idx];
+      if (!item) return;
+
+      document.getElementById('sch-title').value = item.title;
+      document.getElementById('sch-category').value = item.category;
+      
+      editingScheduleIndex = idx;
+      const btn = document.getElementById('sch-submit-btn');
+      btn.innerText = '儲存修改';
+      btn.classList.remove('bg-purple-600');
+      btn.classList.add('bg-indigo-600');
+    }
+
+    function removeScheduleItem(key, idx) {
+      if (store.schedules[key]) {
+        store.schedules[key].splice(idx, 1);
+        if (store.schedules[key].length === 0) delete store.schedules[key];
+        saveData();
+        openDateModal(key);
+      }
+    }
+
     function saveDateModal(key) {
       // Save Work Log
       const isOff = document.getElementById('work-isOff').checked;
@@ -641,11 +745,16 @@
         note: document.getElementById('work-note').value
       };
 
-      // Save Parttime Log
-      const ptHours = parseFloat(document.getElementById('pt-hours').value);
-      if (ptHours) {
+      // Save Parttime Log (基於時間計算)
+      const ptStart = document.getElementById('pt-start').value;
+      const ptEnd = document.getElementById('pt-end').value;
+      const ptRest = parseFloat(document.getElementById('pt-rest').value) || 0;
+
+      if (ptStart && ptEnd) {
         store.parttimeLogs[key] = {
-          hours: ptHours,
+          startTime: ptStart,
+          endTime: ptEnd,
+          restMinutes: ptRest,
           isNationalHoliday: document.getElementById('pt-isNationalHoliday').checked,
           note: document.getElementById('pt-note').value
         };
@@ -677,26 +786,6 @@
       }
     }
 
-    function addScheduleItem(key) {
-      const title = document.getElementById('sch-title').value.trim();
-      const category = document.getElementById('sch-category').value;
-      if (!title) return;
-
-      if (!store.schedules[key]) store.schedules[key] = [];
-      store.schedules[key].push({ title, category });
-      saveData();
-      openDateModal(key);
-    }
-
-    function removeScheduleItem(key, idx) {
-      if (store.schedules[key]) {
-        store.schedules[key].splice(idx, 1);
-        if (store.schedules[key].length === 0) delete store.schedules[key];
-        saveData();
-        openDateModal(key);
-      }
-    }
-
     // Config Updaters
     function updateWorkConfig(field, val) {
       store.workConfig[field] = field === 'monthlySalary' || field === 'dailyHours' ? parseFloat(val) : val;
@@ -704,7 +793,7 @@
     }
 
     function updateParttimeConfig(field, val) {
-      store.parttimeConfig[field] = field === 'hourlyRate' ? parseFloat(val) : val;
+      store.parttimeConfig[field] = (field === 'hourlyRate' || field === 'restMinutes') ? parseFloat(val) : val;
       saveData();
     }
 
